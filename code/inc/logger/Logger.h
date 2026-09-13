@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <unistd.h>
 
-#include "LogLevel.h"
+#include "LogLevel.hpp"
 #include "Appender.h"
 
 /*
@@ -31,54 +31,73 @@ bold/bright off  21
 underline off    24
 inverse off      27
 */
-#define LOG_INFO(name, msg) Logger::log_if_level(LOG_LEVEL::INFO, name, msg)
-#define LOG_DEBUG(name, msg) Logger::log_if_level(LOG_LEVEL::DEBUG, name, msg)
-#define LOG_TRACE(name, msg) Logger::log_if_level(LOG_LEVEL::TRACE, name, msg)
-#define LOG_WARN(name, msg) Logger::log_if_exist(name, msg)
-#define LOG_ERROR(name, msg) Logger::log_if_exist(name, msg)
+#define LOG_INFO(name, msg) Logger::logIfLevel(LOG_LEVEL::INFO, name, msg)
+#define LOG_DEBUG(name, msg) Logger::logIfLevel(LOG_LEVEL::DEBUG, name, msg)
+#define LOG_TRACE(name, msg) Logger::logIfLevel(LOG_LEVEL::TRACE, name, msg)
+#define LOG_WARN(name, msg) Logger::logIfExist(name, msg)
+#define LOG_ERROR(name, msg) Logger::logIfExist(name, msg)
 
 
 class Logger
 {
 public:
-    static Logger getInstance();
-    virtual ~Logger();
-    Logger(Logger &) = delete;
-    void setLogConfigFile(std::string);
+    /// @brief 
+    /// @return 
+    static Logger* getInstance();
 
+    /// @brief 
+    virtual ~Logger();
+
+    /// @brief 
+    /// @param  
+    Logger(Logger &) = delete;
+
+    /// @brief 
+    /// @param  
+    void setLogConfigFile(std::string);
 private:
-    static Logger *_pLoggerSingleton;
+    static Logger* _pLoggerSingleton;
     Logger();
 
+    std::string _configFilePath;
     // Links the name off a logger to a log level, the name of the log is used when logging
-    std::unordered_map<std::string, LOG_LEVEL> log_levels;
+    std::unordered_map<std::string, LOG_LEVEL> _logLevels;
+    // std::unordered_map<std::string, std::string> logger_appender_link;
+
     // Links the name of a logger to an appender
-    std::unordered_map<std::string, std::string> logger_appender_link;
-    // 
-    std::unordered_map<std::string, Appender> appenders;
+    std::unordered_map<std::string, Appender*> _appenders;
     
-    void addAppender(std::string, std::string);
-    void addLogger(std::string, std::string);
-    void readConfigFile(std::string);
-    void readAppenderSettings(std::string);
-    void readLoggerSettings(std::string);
-    std::string getDateAndTime();
+    void parseConfigFile();
+    void parseLoggerConfig(std::string);
+    void parseAppenderConfig(Appender*, std::string);
+
+    static std::string getDateAndTime();
 
 public:
-    static void log_colored(
+    static const std::string LOGGER_KEYWORD;
+    static const std::string APPENDER_TYPE;
+    static const std::string APPENDER_TYPE_CONSOLE;
+    static const std::string APPENDER_TYPE_FILE;
+    static const std::string APPENDER_FLUSH;
+
+    /// @brief 
+    /// @param color 
+    /// @param date 
+    /// @param logger 
+    /// @param msg 
+    static void logToConsole(
         std::string color, 
         std::string date, 
         std::string logger, 
         std::string msg
     );
-    static void log_to_file(
+    static void logToFile(
         int fd, 
         std::string date, 
         std::string logger, 
         std::string msg
     );
-    static void log_if_level(LOG_LEVEL, std::string, std::string);
-    static void log_if_exist(std::string, std::string);
+    static void logIfLevel(LOG_LEVEL, std::string, std::string);
 };
 
 #endif

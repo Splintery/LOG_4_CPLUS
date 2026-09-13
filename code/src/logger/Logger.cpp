@@ -6,47 +6,62 @@
 #include <fcntl.h>
 #include <fstream>
 #include <sstream>
+#include <exception>
+
+std::string trim(const std::string& str,
+                 const std::string& whitespace = " \t")
+{
+    const auto strBegin = str.find_first_not_of(whitespace);
+
+    if (strBegin == std::string::npos)
+        return ""; // no content
+
+    const auto strEnd = str.find_last_not_of(whitespace);
+    const auto strRange = strEnd - strBegin + 1;
+
+    return str.substr(strBegin, strRange);
+}
 
 Logger::Logger()
 {
-    log_levels = std::unordered_map<std::string, Logger::LOG_LEVEL>();
-    logger_appender_link = std::unordered_map<std::string, std::string>();
-    appenders = std::unordered_map<std::string, Appender>();
+    _configFilePath = "";
+    _logLevels = std::unordered_map<std::string, LOG_LEVEL>();
+    _appenders = std::unordered_map<std::string, Appender*>();
 }
 
-void Logger::setLogConfigFile(std::string filePath)
+Logger *Logger::_pLoggerSingleton = nullptr;
+
+const std::string Logger::LOGGER_KEYWORD = "LOGGER";
+const std::string Logger::APPENDER_TYPE = "AppenderType";
+const std::string Logger::APPENDER_TYPE_CONSOLE = "Console";
+const std::string Logger::APPENDER_TYPE_FILE = "File";
+const std::string Logger::APPENDER_FLUSH = "flush";
+
+Logger *Logger::getInstance()
+{
+    if (_pLoggerSingleton == nullptr)
+    {
+        _pLoggerSingleton = new Logger();
+    }
+    return _pLoggerSingleton;
+}
+
+Logger::~Logger()
+{
+    for (auto const& appender : _appenders)
+    {
+        if (appender.second != nullptr)
+        {
+            delete(appender.second);
+        }
+    }
+}
+
+void Logger::setLogConfigFile(std::string config_file_path)
 {
     std::printf("Adding logger");
-    readConfigFile(filePath);
-}
-
-void Logger::addAppender(std::string logger_name, std::string appender_name)
-{
-    Logger::logger_appender_link[logger_name] = appender_name;
-}
-
-void Logger::addLogger(std::string logger_name, std::string log_levels)
-{
-    if (log_levels == "INFO")
-    {
-        Logger::log_levels[logger_name] = LOG_LEVEL::INFO;
-    }
-    else if (log_levels == "DEBUG")
-    {
-        Logger::log_levels[logger_name] = LOG_LEVEL::DEBUG;
-    }
-    else if (log_levels == "TRACE")
-    {
-        Logger::log_levels[logger_name] = LOG_LEVEL::TRACE;
-    }
-    else if (log_levels == "WARN")
-    {
-        Logger::log_levels[logger_name] = LOG_LEVEL::WARN;
-    }
-    else if (log_levels == "ERROR")
-    {
-        Logger::log_levels[logger_name] = LOG_LEVEL::ERROR;
-    }
+    this->_configFilePath = config_file_path;
+    parseConfigFile();
 }
 
 /* 
@@ -56,114 +71,158 @@ LOGGER.TestLog=INFO,MyAppender
 LOGGER.AnotherTest=TRACE,MyAppender
 
 MyAppender.AppenderType=Console
-MyAppender.info_color=32
-MyAppender.debug_color=34
-MyAppender.trace_color=32
-MyAppender.warn_color=35
-MyAppender.error_color=31;1;4
+MyAppender.INFO=32
+MyAppender.DEBUG=34
+MyAppender.TRACE=32
+MyAppender.WARN=35
+MyAppender.ERROR=31;1;4
 MyAppender.flush=true
 
 !CONFIG FILE FORMAT EXAMPLE
 */
 
-
-void Logger::readConfigFile(std::string filePath)
+void Logger::parseConfigFile()
 {
-    std::ifstream config_file = std::ifstream(filePath);
-    for (std::string line; std::getline(config_file, line);)
+    std::cout << "Reading file: " << _configFilePath << std::endl;
+
+    std::ifstream configFileStream = std::ifstream(_configFilePath);
+    if (!configFileStream.good())
     {
-        std::cout << line << std::endl;
-        if (line.size() > 6 && line.substr(0, 6) == "LOGGER") //? Line that defines the visibility of a logger
+        std::string errorMsg = "Failed to open file stream for: " + _configFilePath;
+        throw std::runtime_error(errorMsg);
+    }
+
+    for (std::string line; std::getline(configFileStream, line);)
+    {
+        // Checks if line contains LOGGERs
+        if (line.find(LOGGER_KEYWORD) != std::string::npos) //? Line that defines the visibility of a logger
         {
-            readLoggerSettings(line);
+            parseLoggerConfig(line);
         }
         else if (!line.empty())
         {
-            readAppenderSettings(line);
+            std::cout << line << std::endl;
+            for (auto const& appender : _appenders)
+            {
+                if (appender.second != nullptr && line.find(appender.second->name) != std::string::npos)
+                {
+                    parseAppenderConfig(appender.second, line);
+                    break;
+                }
+            }
         }
     }
 }
 
-// needs to be called with enough info the construct an appender.
-void Logger::readAppenderSettings(std::string line)
+void Logger::parseLoggerConfig(std::string line) //? line = 'LOGGER.TestLog=INFO,MyAppender'
 {
-    std::string appender_name = line.substr(0, line.find('.'));
-    std::cout << "name of the appender to add: " << appender_name << std::endl;
-    if (Logger::appenders.count(appender_name) == 0)
+    int dotPos;
+    if ((dotPos = line.find('.')) == std::string::npos)
     {
-        Logger::appenders[appender_name] = Appender();
-        std::cout << "Created the AppenderInfo object for appender: " << appender_name << std::endl;;
+        std::string errorMsg = "Couldn't parse '.' seperator in line: " + line;
+        throw std::runtime_error(errorMsg);
     }
+
+    std::string loggerName = line.substr(dotPos + 1); // After this step, loggerName = 'TestLog=INFO,MyAppender'
+
+    int equalPos;
+    if ((equalPos = loggerName.find('=')) == std::string::npos)
+    {
+        std::string errorMsg = "Couldn't parse '=' seperator in line: " + line;
+        throw std::runtime_error(errorMsg);
+    }
+
+    std::string loggerOptions = loggerName.substr(equalPos + 1); // After this step, loggerOptions = 'INFO,MyAppender'
+    loggerName = loggerName.substr(0, equalPos); // After this step, loggerName = 'TestLog'
+
+    int commaPos;
+    if ((commaPos = loggerOptions.find(',')) == std::string::npos)
+    {
+        std::string errorMsg = "Couldn't parse ',' seperator in line: " + line;
+        throw std::runtime_error(errorMsg);
+    }
+
+    std::string appenderName = trim(loggerOptions.substr(commaPos + 1)); // After this step, appenderName = 'MyAppender'
+    std::string loggerLevel = trim(loggerOptions.substr(0, commaPos)); // After this step, loggerLevel = 'INFO'
     
-    std::string appender_info_tag = line.substr(appender_name.size() + 1, line.find('=') - appender_name.size() - 1);
-    std::string appender_info_value = line.substr(line.find('=') + 1);
-
-    std::cout << "====" << line.find('=') << " raw line is[" << line << "] size: " << line.size() << std::endl << std::endl;
-
-    if (appender_info_tag == "AppenderType")
-        Logger::appenders[appender_name].fileDescriptor = 1;
-    else if (appender_info_tag == "info_color")
-        Logger::appenders[appender_name].appender_color[LOG_LEVEL::INFO] = appender_info_value;
-    else if (appender_info_tag == "debug_color")
-        Logger::appenders[appender_name].appender_color[LOG_LEVEL::DEBUG] = appender_info_value;
-    else if (appender_info_tag == "trace_color")
-        Logger::appenders[appender_name].appender_color[LOG_LEVEL::TRACE] = appender_info_value;
-    else if (appender_info_tag == "warn_color")
-        Logger::appenders[appender_name].appender_color[LOG_LEVEL::WARN] = appender_info_value;
-    else if (appender_info_tag == "error_color")
-        Logger::appenders[appender_name].appender_color[LOG_LEVEL::ERROR] = appender_info_value;
-    else if (appender_info_tag == "flush")
-        if (appender_info_value == "true")
-            Logger::appenders[appender_name].flush = true;
-        else
-            Logger::appenders[appender_name].flush = false;
+    _logLevels[loggerName] = LOG_LEVEL_HELPER::fromString(loggerLevel);
+    std::cout << "adding appender:" << appenderName << std::endl;
+    _appenders[loggerName] = new Appender(appenderName);
 }
 
-void Logger::readLoggerSettings(std::string line) //? line = LOGGER.TestLog=INFO,MyAppender
+// needs to be called with enough info the construct an appender.
+void Logger::parseAppenderConfig(Appender* pAppender, std::string line) //? line = 'MyAppender.AppenderType=Console'
 {
-    std::string logger = line.substr(7); //? logger = TestLog=INFO,MyAppender
-    std::string logger_name = logger.substr(0, logger.find('=')); //? logger_name = TestLog
+    int dotPos;
+    if ((dotPos = line.find('.')) == std::string::npos)
+    {
+        std::string errorMsg = "Couldn't parse '.' seperator in line: " + line;
+        throw std::runtime_error(errorMsg);
+    }
 
+    std::string appenderOptionKey = line.substr(dotPos + 1); // After this step, appenderOptionKey = 'AppenderType=Console'
+    
+    int equalPos;
+    if ((equalPos = appenderOptionKey.find('=')) == std::string::npos)
+    {
+        std::string errorMsg = "Couldn't parse '=' seperator in line: " + line;
+        throw std::runtime_error(errorMsg);
+    }
 
-    std::istringstream config(logger.substr(logger_name.size() + 1)); //? config = INFO,MyAppender
-    std::string config_info;
-    std::getline(config, config_info, ','); //? config_info = INFO
-    addLogger(logger_name, config_info);
-    std::getline(config, config_info, ','); //? config_info = MyAppender
-    addAppender(logger_name, config_info);
+    std::string appenderOptionValue = trim(appenderOptionKey.substr(equalPos + 1)); // After this step, appenderOptionValue = 'Console'
+    appenderOptionKey = trim(appenderOptionKey.substr(0, equalPos)); // After this step, appenderOptionKey = 'AppenderType'
+
+    // after parsing the key & value we need to update the correct option 
+    if (LOG_LEVEL_HELPER::fromString(appenderOptionKey) != LOG_LEVEL::NONE)
+    {
+        pAppender->addColorOption(LOG_LEVEL_HELPER::fromString(appenderOptionKey), appenderOptionValue);
+    }
+    else if (appenderOptionKey == APPENDER_TYPE)
+    {
+        if (appenderOptionValue != APPENDER_TYPE_CONSOLE && appenderOptionValue != APPENDER_TYPE_FILE)
+        {
+            std::string errorMsg = "Invalid appender type found in line: " + line;
+            throw std::runtime_error(errorMsg);
+        }
+        pAppender->setIsConsole(appenderOptionValue == APPENDER_TYPE_CONSOLE);
+    }
+    else if (appenderOptionKey == APPENDER_FLUSH)
+    {
+        pAppender->setFlush(appenderOptionValue == "true");
+    }
+    else
+    {
+        std::string errorMsg = "Invalid appender option \"" + appenderOptionKey + "\" found in line: " + line;
+        throw std::runtime_error(errorMsg);
+    }
 }
+
+
 
 std::string Logger::getDateAndTime()
 {
-    auto time = std::chrono::system_clock::now();
+    std::chrono::system_clock::time_point time = std::chrono::system_clock::now();
     std::time_t formated_time = std::chrono::system_clock::to_time_t(time);
     std::string time_to_print = std::ctime(&formated_time);
     time_to_print.pop_back();
     return "[" + time_to_print + "]";
 }
 
-void Logger::log_colored(std::string color, std::string date, std::string logger, std::string msg)
+void Logger::logToConsole(std::string color, std::string date, std::string logger, std::string msg)
 {
-    std::cout << date << color << logger << ": " << msg << "\033[0m" << std::endl;
+    // std::cout << date << color << logger << ": " << msg << "\033[0m" << std::endl;
 }
 
-void Logger::log_to_file(int fd, std::string date, std::string logger, std::string msg)
+void Logger::logToFile(int fd, std::string date, std::string logger, std::string msg)
 {
 }
 
-void Logger::log_if_level(LOG_LEVEL level_required, std::string logger, std::string msg)
+void Logger::logIfLevel(LOG_LEVEL level_required, std::string logger, std::string msg)
 {
-    if (Logger::log_levels.count(logger) && (Logger::log_levels[logger] >= level_required))
-    {
-        std::string color_settings = "\033[" + Logger::appenders[Logger::logger_appender_link[logger]].info_color + "\033[0m";
-        Logger::log_colored(color_settings, getDateAndTime(), logger, msg);
-    }
-}
-
-void Logger::log_if_exist(std::string logger, std::string msg)
-{
-    if (Logger::log_levels.count(logger))
-    {
-        
-    }
+    // Logger* pLogger = Logger::getInstance();
+    // if (pLogger->log_levels.count(logger) && (pLogger->log_levels[logger] >= level_required))
+    // {
+    //     // std::string color_settings = "\033[" + pLogger->appenders[pLogger->logger_appender_link[logger]].info_color + "\033[0m";
+    //     // pLogger->log_colored(color_settings, getDateAndTime(), logger, msg);
+    // }
 }

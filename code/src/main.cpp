@@ -4,5 +4,5 @@
 int main()
 {
     std::printf("HElloWorld");
-    Logger::getInstance().setLogConfigFile("loggerConfig.config");
+    Logger::getInstance()->setLogConfigFile("loggerConfig.config");
 }

@@ -2,21 +2,37 @@
 #include <iostream>
 #include <string>
 
-Appender::Appender(std::string info_color, std::string debug_color, std::string trace_color, std::string warn_color, std::string error_color, bool flush): flush{flush}
+Appender::Appender(std::string appenderName): name(appenderName) {}
+
+Appender::~Appender()
 {
-    appender_colors[0] = info_color;
-    appender_colors[1] = debug_color;
-    appender_colors[2] = trace_color;
-    appender_colors[3] = warn_color;
-    appender_colors[4] = error_color;
 }
 
-std::string Appender::formatMessage(LOG_LEVEL level, std::string message)
+void Appender::addColorOption(LOG_LEVEL level, std::string color)
 {
-    return "\033[" + appender_colors[(int) level] + "m" + message + "\033]0m";
+    _appenderColors[(int)level] = color;
+}
+
+void Appender::setIsConsole(bool isConsoleAppender)
+{
+    _isConsoleAppender = isConsoleAppender;
+}
+
+void Appender::setFlush(bool flush)
+{
+    _flush = flush;
 }
 
 void Appender::printMessage(LOG_LEVEL level, std::string message)
 {
-    std::cout << formatMessage(level, message) << std::endl;
+    if (_isConsoleAppender)
+    {
+        message = formatMessage(level, message);
+    }
+    std::cout << message << std::endl;
+}
+
+std::string Appender::formatMessage(LOG_LEVEL level, std::string message)
+{
+    return "\033[" + _appenderColors[(int) level] + "m" + message + "\033]0m";
 }
